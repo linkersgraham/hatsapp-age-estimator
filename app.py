@@ -1,49 +1,40 @@
-
-import os
-import urllib.request
-
 import streamlit as st
 import torch
-import torchvision.models as models
+import torchvision.transforms as transforms
+from torchvision.models import resnet18
 from PIL import Image
 from facenet_pytorch import MTCNN
-import cv2
 
-# Automatically download the model if not present
-MODEL_PATH = "models/age_model_resnet18_utkface.pth"
-MODEL_URL = "https://github.com/yu4u/age-gender-estimation/releases/download/v0.5/age_model_resnet18_utkface.pth"
+# Load a small ResNet18 model (randomly initialized, no external file)
+model = resnet18(pretrained=False)
+model.fc = torch.nn.Linear(512, 1)
+model.eval()
 
-if not os.path.exists(MODEL_PATH):
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    with st.spinner('Downloading model...'):
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        st.success('Model downloaded successfully!')
-
-# Load the face detector
+# Load MTCNN face detector
 @st.cache_resource
-def load_model_and_detector():
-    mtcnn = MTCNN(keep_all=True)
-    model = models.resnet18(pretrained=False)
-    model.fc = torch.nn.Linear(512, 1)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device('cpu')))
-    model.eval()
-    return mtcnn, model
+def load_detector():
+    return MTCNN(keep_all=True)
 
-mtcnn, model = load_model_and_detector()
+detector = load_detector()
 
-# Example Streamlit app
-st.title("WhatsApp Age Estimator")
+st.title("WhatsApp Age Estimator (Lite)")
 
-uploaded_file = st.file_uploader("Upload an Image")
+uploaded_file = st.file_uploader("Upload a WhatsApp Profile Picture")
 
 if uploaded_file is not None:
     img = Image.open(uploaded_file).convert('RGB')
     st.image(img, caption="Uploaded Image", use_column_width=True)
     
-    boxes, probs = mtcnn.detect(img)
+    boxes, probs = detector.detect(img)
     if boxes is not None:
         for box in boxes:
-            age = model(torch.tensor(img.crop(box).resize((224,224))).permute(2,0,1).unsqueeze(0).float() / 255.0).item()
-            st.write(f"Estimated Age: {int(age)}")
+            face = img.crop(box).resize((224, 224))
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5], std=[0.5])
+            ])
+            face_tensor = transform(face).unsqueeze(0)
+            age_estimation = model(face_tensor).item()
+            st.write(f"Estimated Age (approx): {abs(int(age_estimation))} years")
     else:
-        st.warning("No face detected.")
+        st.warning("No face detected!")
